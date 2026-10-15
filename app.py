@@ -55,6 +55,10 @@ class App(tk.Tk):
         self._courses_drawn = False
         self._user_stopped = False  # 手动停止后不再自动拉起
         self._armed = False         # 只有用户自己点过「启动」才允许自动拉起
+        self._qr_notified = set()   # 已响铃提醒过的二维码点名 rid
+        self._qr_title = False      # 窗口标题是否处于二维码告警态
+        self._qr_session = None     # 复用登录会话（粘贴提交用）
+        self._qr_sid = None
         self._breath = 0
         self._configure_styles()
         self._build_ui()
@@ -161,6 +165,7 @@ class App(tk.Tk):
         self._build_actions(body)
         self._build_middle(body)
         self._build_courses(body)
+        self._build_qr(body)
         self._build_account(body)
         self._build_log(body)
 
@@ -368,6 +373,121 @@ class App(tk.Tk):
         self._toast(f"已保存：监控 {len(self.course_vars) - len(disabled)} 门，"
                     f"另外 {len(disabled)} 门不再抓取")
         self.refresh()
+
+    # ---------------- 二维码签到（半自动） ----------------
+    def _build_qr(self, parent):
+        c = self.c
+        card = tk.Frame(parent, bg=c["card"], highlightbackground=c["border"],
+                        highlightthickness=1)
+        card.pack(fill="x", pady=(14, 0))
+        pad = tk.Frame(card, bg=c["card"])
+        pad.pack(fill="x", padx=16, pady=14)
+        head = tk.Frame(pad, bg=c["card"])
+        head.pack(fill="x")
+        tk.Label(head, text="🔳  二维码签到", bg=c["card"], fg=c["text"],
+                 font=self.font_head).pack(side="left")
+        self.qr_state = tk.Label(head, text="", bg=c["card"], fg=c["muted"],
+                                 font=("Microsoft YaHei UI", 9))
+        self.qr_state.pack(side="left", padx=12)
+        tk.Label(pad, text="自动签不了：token 只存在于老师屏幕的二维码里，学生端接口不下发"
+                           "（实测 GET /api/rollcall/{id}/qr_code 是 404），窗口约 10 分钟。\n"
+                           "本程序能做两件事：① 点名一出现就响铃 + 窗口置顶提醒你；"
+                           "② 你若拿到了二维码内容（同学发你的链接/文本），粘进来替你提交。",
+                 bg=c["card"], fg=c["muted"], justify="left", wraplength=900,
+                 font=("Microsoft YaHei UI", 9)).pack(anchor="w", pady=(6, 8))
+        row = tk.Frame(pad, bg=c["card"])
+        row.pack(fill="x")
+        self.qr_text = tk.StringVar()
+        tk.Entry(row, textvariable=self.qr_text, font=("Consolas", 10),
+                 bg=c["bg"], fg=c["text"], relief="flat", insertbackground=c["text"]
+                 ).pack(side="left", fill="x", expand=True, ipady=4)
+        tk.Button(row, text="提交二维码", bg=c["primary"], fg="white", bd=0,
+                  font=("Microsoft YaHei UI", 9, "bold"), padx=14, pady=5,
+                  command=self.submit_qr).pack(side="left", padx=8)
+        self.qr_state.config(text="当前没有进行中的二维码点名")
+
+    def _qr_login(self, relogin=False):
+        """拿到可用会话（缓存；relogin=True 强制重新登录）"""
+        import auto_checkin as ac
+        if relogin or self._qr_session is None or self._qr_sid is None:
+            self._qr_session, self._qr_sid = ac.do_login()
+        return self._qr_session, self._qr_sid
+
+    def submit_qr(self):
+        content = self.qr_text.get().strip()
+        if not content:
+            self._toast("先把二维码里的文本或链接粘贴到输入框")
+            return
+        self._toast("正在提交二维码…")
+        threading.Thread(target=self._submit_qr_work, args=(content,),
+                         daemon=True).start()
+
+    def _submit_qr_work(self, content):
+        msg = ""
+        try:
+            import auto_checkin as ac
+            session, sid = self._qr_login()
+            alerts = cp.run_status().get("qr_alert") or []
+            targets = [{"rid": a.get("rid"), "course": a.get("course")}
+                       for a in alerts if a.get("rid")]
+            if not targets:
+                targets = ac.find_active_qr_rollcalls(session, sid)
+            if not targets:
+                msg = "当前没有进行中的二维码点名（或者已经签上了）"
+            else:
+                t = targets[0]
+                ok, detail = ac.answer_qr(t["rid"], content, session)
+                if not ok and "401" in detail:      # 会话过期 → 重登一次再试
+                    session, sid = self._qr_login(relogin=True)
+                    ok, detail = ac.answer_qr(t["rid"], content, session)
+                if ok:
+                    try:
+                        ac.record_ok("二维码", t.get("course") or "?", detail)
+                    except Exception:
+                        pass
+                msg = ("✅ " if ok else "❌ ") + f"{t.get('course', '?')}：{detail}"
+        except Exception as e:
+            msg = f"提交失败: {e}"
+        self.after(0, lambda: self._toast(msg))
+        self.refresh()
+
+    def _handle_qr_alerts(self, alerts):
+        """二维码点名出现 → 响铃 + 置顶 + 浮层（每条点名只提醒一次），并显示倒计时"""
+        if not alerts:
+            self.qr_state.config(text="当前没有进行中的二维码点名",
+                                 fg=self.c["muted"])
+            if self._qr_title:
+                self.title("XMU 畅课自动签到")
+                self._qr_title = False
+            return
+        a = alerts[0]
+        left = a.get("left")
+        cnt = (f"还剩 {left // 60} 分 {left % 60} 秒"
+               if isinstance(left, int) else "进行中")
+        course = a.get("course") or "?"
+        self.qr_state.config(text=f"⚠ {course}：{cnt}，请用手机扫码",
+                             fg=self.c["danger"])
+        if not self._qr_title:
+            self.title(f"⚠ 二维码签到：{course}（{cnt}）")
+            self._qr_title = True
+        rid = a.get("rid")
+        if rid not in self._qr_notified:
+            self._qr_notified.add(rid)
+            self._toast(f"⚠ 二维码点名：{course}\n{cnt}，请用手机扫码\n"
+                        f"（脚本拿不到 token，无法自动签）")
+            try:
+                self.bell()
+                import winsound
+                winsound.MessageBeep(winsound.MB_ICONHAND)
+            except Exception:
+                pass
+            try:
+                self.deiconify()
+                self.lift()
+                self.attributes("-topmost", True)
+                self.after(4000, lambda: self.attributes("-topmost", False))
+            except Exception:
+                pass
 
     def _build_log(self, parent):
         # 终端风格实时控制台面板
@@ -702,6 +822,9 @@ class App(tk.Tk):
         # 定时
         self.sched.config(text="定时：" + cp.schedule_status_text())
 
+        # 二维码点名提醒（响铃 + 置顶 + 倒计时）
+        self._handle_qr_alerts(rs.get("qr_alert") or [])
+
         # 今日签到
         today = data["today"]
         if today:
@@ -793,6 +916,23 @@ if __name__ == "__main__":
             slots = (cp.schedule_load().get("slots") or []) if \
                 cp.schedule_load().get("enabled") else []
             print(cp.schedule_apply(slots) if slots else cp.schedule_cancel())
+        elif cmd == "qr":
+            # 二维码半自动：把二维码内容贴进来，自动找当前二维码点名并提交
+            import auto_checkin as ac
+            content = " ".join(argv[1:]).strip()
+            if not content:
+                print("用法: XMU畅课签到.exe qr <二维码内容或链接>")
+            else:
+                s, sid = ac.do_login()
+                targets = ac.find_active_qr_rollcalls(s, sid)
+                if not targets:
+                    print("当前没有进行中的二维码点名（或已签上）")
+                else:
+                    t = targets[0]
+                    ok, detail = ac.answer_qr(t["rid"], content, s)
+                    print(("OK  " if ok else "FAIL ") + f"{t['course']}: {detail}")
+                    if ok:
+                        ac.record_ok("二维码", t["course"], detail)
         else:
             App().mainloop()
     else:

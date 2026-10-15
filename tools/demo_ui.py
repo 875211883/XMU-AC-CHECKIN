@@ -58,14 +58,14 @@ cp.RUN_STATUS_FILE.write_text(json.dumps({
     "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     "query_total": 168,
     "course_queries": {c["name"]: 24 for c in COURSES},
+    # 演示二维码告警：界面会显示"还剩 X 分 Y 秒"（假数据，不指向任何真实点名）
+    "qr_alert": [{"rid": 999999, "course": "线性代数", "cid": 999, "left": 492}],
     "events": [
         "[NEW] 高等数学 A (数字)",
         "[GO] 高等数学 A 已签 41/96，达标开签",
         "[OK] 数字 高等数学 A 码=0839",
-        "[NEW] 体育（篮球） (GPS)",
-        "[WAIT] 体育（篮球） 已签 12/60，未达标继续等",
-        "[GO] 体育（篮球） 已签 22/60，达标开签",
-        "[OK] GPS 体育（篮球） (24.4392, 118.0977)",
+        "[QR] 线性代数 是二维码点名，请用手机扫码（拿不到 token，脚本不会自动签）",
+        "[OK] GPS 大学物理 B (24.4392, 118.0977)",
     ],
 }, ensure_ascii=False), encoding="utf-8")
 

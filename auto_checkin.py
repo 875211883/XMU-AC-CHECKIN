@@ -140,8 +140,12 @@ STATUS_FILE = APP_DIR / "auto_checkin_status.json"
 
 
 def write_run_status(restart_count=None, course_queries=None, query_total=None,
-                     events=None):
-    """把运行状态（看门狗重启、每门课查询、总查询、最近事件）落盘供界面读取"""
+                     events=None, qr_alert=None):
+    """把运行状态（看门狗重启、每门课查询、总查询、最近事件、二维码告警）落盘供界面读取。
+
+    qr_alert: [{"rid","course","end_time","left"}] —— 正在进行的二维码点名，
+    界面据此弹提醒/倒计时（脚本拿不到 token，只能提醒用户用手机扫）。
+    """
     try:
         data = {}
         if STATUS_FILE.exists():
@@ -154,6 +158,8 @@ def write_run_status(restart_count=None, course_queries=None, query_total=None,
             data["query_total"] = query_total
         if events is not None:
             data["events"] = events[-40:]
+        if qr_alert is not None:
+            data["qr_alert"] = qr_alert
         data["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
         STATUS_FILE.write_text(
             json.dumps(data, ensure_ascii=False), encoding="utf-8")
@@ -783,14 +789,106 @@ def _cap_diag_file(path, max_bytes=256 * 1024, keep_lines=40):
 def _is_qr_rollcall(rc):
     """是否二维码点名。
 
-    学生端 API **不携带**任何可用于提交的 token —— token 只存在于老师屏幕上的
-    那张二维码里，且实测 10 分钟就失效，所以脚本无法代签，只能提醒用户拿手机扫。
-    这里只做类型识别，供主循环给出明确提示、不再当成"状态获取失败"白重试。
+    学生端 API **不携带**任何可用于提交的 token（实测 `GET /api/rollcall/{id}/qr_code`
+    是 404，点名详情里也没有 token 字段）—— token 只存在于老师屏幕上的那张二维码里，
+    实测 10 分钟失效。所以脚本无法自己代签，只能：① 立刻提醒用户用手机扫；
+    ② 用户把二维码内容贴进来时替他提交（answer_qr）。
     """
     rc = rc or {}
     return (str(rc.get("type") or "").lower() == "qr_rollcall"
             or str(rc.get("source") or "").lower() == "qr"
             or bool(rc.get("is_qr")))
+
+
+def qr_token_from_text(text):
+    """从"二维码内容"里取出 token。
+
+    二维码里可能是纯 token，也可能是一整条 URL（带 ?token=… / ?qr_code=… 或把
+    token 放在路径最后一段）。两种都兼容。
+    """
+    t = (text or "").strip().strip('"').strip("'")
+    if not t:
+        return ""
+    if "://" in t or t.startswith("/"):
+        try:
+            from urllib.parse import parse_qs, unquote, urlparse
+            u = urlparse(t)
+            q = parse_qs(u.query)
+            for k in ("token", "qr_code", "qrCode", "code", "t", "sign", "value"):
+                if q.get(k):
+                    return unquote(str(q[k][0]))
+            path = (u.path or "").rstrip("/")
+            if path:
+                return unquote(path.split("/")[-1])
+        except Exception:
+            pass
+    return t
+
+
+def answer_qr(rollcall_id, content, session):
+    """二维码签到提交（用户提供的二维码内容）。
+
+    接口（实测存在）：`PUT /api/rollcall/{id}/answer_qr_rollcall`
+      - 路径写错 → 404 `{"message":"未找到资源"}`
+      - 点名已结束 → 400 `{"error_code":"rollcall_already_closed"}`
+    参数名服务端只在"点名开着"时才校验，所以这里一次性带上几个常见键，
+    服务端取它需要的那个（多余键会被忽略）。
+    提交后用名单里本人的 rollcall_status 确认是否真的签上。
+    返回 (ok, message)。
+    """
+    token = qr_token_from_text(content)
+    if not token:
+        return False, "内容为空：请粘贴二维码里的文本或链接"
+    url = f"{BASE_URL}/api/rollcall/{rollcall_id}/answer_qr_rollcall"
+    payload = {"qrCode": token, "qr_code": token, "code": token,
+               "token": token, "qr_token": token, "answer": token}
+    try:
+        r = session.put(url, json=payload, timeout=15)
+    except Exception as e:
+        return False, f"提交失败: {e}"
+    if r.status_code == 200:
+        if check_my_checkin_status(rollcall_id, session) == SIGNED_STUDENT_STATUS:
+            return True, "已确认签到成功（名单里本人 = on_call_fine）"
+        return True, "服务端返回 200；名单暂未确认，稍后可在界面再看"
+    detail = ""
+    try:
+        j = r.json()
+        detail = str(j.get("error_code") or j.get("message") or "")
+    except Exception:
+        detail = (r.text or "")[:120].replace("\n", " ")
+    return False, f"HTTP {r.status_code} {detail}".strip()
+
+
+def find_active_qr_rollcalls(session, student_id):
+    """列出当前"进行中且本人未签"的二维码点名 → [{rid,course,cid,end_time}]"""
+    out = []
+    disabled = load_disabled_courses()
+    for c in get_courses(session):
+        cid = c.get("id")
+        if str(cid) in disabled:
+            continue
+        name = c.get("display_name") or c.get("name") or str(cid)
+        try:
+            rollcalls = get_rollcalls(cid, session, student_id)
+        except Exception:
+            continue
+        for rc in rollcalls:
+            if not _is_qr_rollcall(rc):
+                continue
+            rid = rc.get("id") or rc.get("rollcall_id")
+            if not rid:
+                continue
+            try:
+                _code, rc_status, end_time = get_rollcall_detail(rid, session)
+            except Exception:
+                rc_status, end_time = None, None
+            if _is_terminal(rc.get("status"), end_time):
+                continue
+            if _rollcall_dead(rc, rc_status):
+                continue
+            out.append({"rid": rid, "course": name, "cid": cid,
+                        "end_time": end_time})
+    return out
 
 
 def rollcall_label(rollcall):
@@ -912,6 +1010,7 @@ def main_loop():
     announced = set()           # rid → 已播报过 [NEW]（不再重复播报）
     last_msg = {}               # rid → 上一条事件文本
     repeat_n = {}               # rid → 同一条消息已重复次数
+    qr_alerts = {}              # rid → 进行中的二维码点名（供界面弹提醒/倒计时）
     events = []
     query_count = 0
     course_queries = {}       # 课程名 → 该课程被查询次数
@@ -995,14 +1094,18 @@ def main_loop():
                         continue
 
                     # 二维码点名：学生端拿不到 token（只在老师屏幕的二维码里，
-                    # 实测 10 分钟失效），脚本无法代签 → 明确提示，别再当"状态获取
-                    # 失败"白重试 10 轮
+                    # 实测 10 分钟失效），脚本无法自己代签 → ① 明确提示；
+                    # ② 写进 qr_alert，界面据此弹提醒 + 倒计时（也可粘贴内容代提交）
                     if is_qr:
-                        seen.add(rid)
                         left = _time_remaining(end_time)
-                        tip = (f"，还剩 {int(left // 60)} 分 {int(left % 60)} 秒，"
-                               f"请用手机扫码" if left and left > 0 else "，请用手机扫码")
-                        emit(rid, f"[QR] {name} 是二维码点名{tip}（脚本无法代签）")
+                        emit(rid, f"[QR] {name} 是二维码点名，请用手机扫码"
+                                  f"（拿不到 token，脚本不会自动签）")
+                        if left is None or left > 0:
+                            qr_alerts[rid] = {
+                                "rid": rid, "course": name, "cid": cid,
+                                "end_time": end_time,
+                                "left": int(left) if left else None,
+                            }
                         continue
 
                     # 数字签到：点名时间已过去很久还没下发码 → 服务端不会再给，
@@ -1113,10 +1216,21 @@ def main_loop():
                 # 一次性汇总，避免每个历史点名各刷一条
                 events.append(f"[SKIP] 已跳过 {dead_skipped} 个已结束的点名（不再重试）")
 
+            # 二维码告警维护：签上了 / 已过期 → 撤掉提醒；否则刷新剩余时间
+            for _rid in list(qr_alerts):
+                if _rid in seen:
+                    qr_alerts.pop(_rid, None)
+                    continue
+                _left = _time_remaining(qr_alerts[_rid].get("end_time"))
+                if _left is not None and _left <= 0:
+                    qr_alerts.pop(_rid, None)
+                else:
+                    qr_alerts[_rid]["left"] = int(_left) if _left else None
+
             last_poll = now
             # 每轮轮询写一次运行状态（界面读取）
             write_run_status(course_queries=course_queries, query_total=query_count,
-                             events=events)
+                             events=events, qr_alert=list(qr_alerts.values()))
 
         # 限制 events 长度，防止内存泄漏
         if len(events) > 200:
@@ -1143,8 +1257,9 @@ def main():
 
     while True:
         restart_count += 1
-        # 重启时清空事件列表：否则界面会继续显示上一轮（可能是几小时前）的事件
-        write_run_status(restart_count=restart_count, events=[])
+        # 重启时清空事件列表与二维码告警：否则界面会继续显示上一轮
+        # （可能是几小时前）的事件与提醒
+        write_run_status(restart_count=restart_count, events=[], qr_alert=[])
         try:
             ok = main_loop()
             if ok is False:

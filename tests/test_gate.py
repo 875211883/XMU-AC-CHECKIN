@@ -219,5 +219,35 @@ check("标签=其他", ac.rollcall_label({}) == "其他")
 check("已扫过的二维码点名算终端（不会重复提示）",
       ac._is_terminal(qr_rc["status"], None))
 
+print("== v1.5 新增：二维码半自动（token 提取 + 告警落盘）==")
+check("URL 带 token 参数",
+      ac.qr_token_from_text("https://lnt.xmu.edu.cn/x?token=AB12") == "AB12")
+check("URL 路径末段",
+      ac.qr_token_from_text("https://lnt.xmu.edu.cn/a/b/AB12") == "AB12")
+check("纯 token", ac.qr_token_from_text("  AB12  ") == "AB12")
+check("去掉引号", ac.qr_token_from_text('"AB12"') == "AB12")
+check("空内容 → 空串", ac.qr_token_from_text("") == "")
+check("同时存在时按优先序取",
+      ac.qr_token_from_text("https://x/?qr_code=ZZ&token=YY") == "YY")
+check("中文/特殊字符原样返回", ac.qr_token_from_text("码=0839") == "码=0839")
+
+import json  # noqa: E402
+
+with tempfile.TemporaryDirectory() as _td2:
+    _bak = ac.STATUS_FILE
+    ac.STATUS_FILE = Path(_td2) / "status.json"
+    ac.write_run_status(restart_count=1, events=[],
+                        qr_alert=[{"rid": 450660, "course": "线性代数(A)",
+                                   "left": 480}])
+    _d = json.loads(ac.STATUS_FILE.read_text(encoding="utf-8"))
+    check("qr_alert 已写入状态文件",
+          bool(_d.get("qr_alert")) and _d["qr_alert"][0]["rid"] == 450660)
+    check("合并写：其他字段不被清掉", _d.get("restart_count") == 1)
+    ac.write_run_status(qr_alert=[])
+    _d = json.loads(ac.STATUS_FILE.read_text(encoding="utf-8"))
+    check("qr_alert 可被清空", _d.get("qr_alert") == [])
+    check("清空告警后 restart_count 仍在", _d.get("restart_count") == 1)
+    ac.STATUS_FILE = _bak
+
 print(f"\n结果: {PASS} 通过 / {FAIL} 失败")
 sys.exit(1 if FAIL else 0)
