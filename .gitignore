@@ -1,0 +1,41 @@
+# 凭据 / 会话：含真实 Cookie 与密码，绝不提交
+creds.env
+auto_checkin_session.json
+auto_checkin.pid
+
+# 运行期个人数据（课程勾选、签到记录、定时、状态）
+course_filter.json
+schedule.json
+checkin_record.json
+code_missing_diag.json
+auto_checkin_status.json
+launch_count.json
+ui_settings.json
+start_time.txt
+
+# 日志
+checkin.log
+checkin.log.*
+checkin.log.bak-*
+start_trace.txt
+
+# 打包产物
+build/
+dist/
+*.exe
+*.pkg
+
+# Python
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

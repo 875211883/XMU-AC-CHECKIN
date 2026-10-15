@@ -1,0 +1,11 @@
+# 统一换行与二进制处理（避免 Windows/Linux 协作时整文件 diff）
+* text=auto
+*.py    text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.spec  text eol=lf
+*.json  text eol=lf
+*.bat   text eol=crlf
+*.png   binary
+*.exe   binary
+*.pkg   binary
