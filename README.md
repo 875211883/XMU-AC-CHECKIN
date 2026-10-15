@@ -117,8 +117,17 @@ python -m PyInstaller --noconfirm XMU畅课签到.spec
 
 **Q：提示「签到码暂未获取」？**
 数字码在 2026-10 之后服务端不再通过点名详情下发，工具会走课表日期接口兜底；两路都拿不到
-就没法提交（QR 签到同样无法自动化，token 是服务端密钥）。这类点名会被记进
-`code_missing_diag.json` 方便排查。
+就没法提交。这类点名会被记进 `code_missing_diag.json` 方便排查。
+
+**Q：二维码签到能自动签吗？**
+不能，这是设计使然：二维码里的 token 只存在于**老师屏幕上那张图**里，学生端接口
+**不下发任何 token 字段**（实测详情接口只有 `comment/end_time/is_number/is_radar/
+number_code/status/title/type`，无 token），而且窗口只有约 10 分钟。
+脚本能做的是**一眼认出二维码点名并提醒你**（不会白重试、也不会漏提醒）：
+
+```
+[QR] 线性代数(A) 是二维码点名，还剩 8 分 12 秒，请用手机扫码（脚本无法代签）
+```
 
 **Q：会不会把昨天的点名一直重试刷屏？**
 不会。课程列表接口会长期保留历史点名（`is_expired` 仍是 false、本人 `status` 仍是 absent），

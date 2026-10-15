@@ -197,5 +197,27 @@ with tempfile.TemporaryDirectory() as _td:
     check("超限后只留最后 10 行",
           len(_p.read_text(encoding="utf-8").splitlines()) == 10)
 
+print("== v1.4 新增：二维码点名识别（脚本不能代签，但必须认出来）==")
+# 实测样本：线性代数的一次二维码点名（详情接口不带任何 token 字段）
+qr_rc = {
+    "id": 427281, "is_number": False, "is_radar": False, "is_expired": False,
+    "source": "qr", "type": "qr_rollcall", "status": "on_call_fine",
+    "rollcall_status": "finished", "rollcall_time": "2026-09-22T02:01:00Z",
+    "student_status": "on_call", "title": "2026.09.22 10:01",
+}
+check("source=qr → 识别为二维码", ac._is_qr_rollcall(qr_rc))
+check("type=qr_rollcall → 识别", ac._is_qr_rollcall({"type": "qr_rollcall"}))
+check("大小写不敏感", ac._is_qr_rollcall({"source": "QR"}))
+check("is_qr 标记 → 识别", ac._is_qr_rollcall({"is_qr": True}))
+check("数字点名不误判", not ac._is_qr_rollcall(
+    {"type": "another", "source": "number", "is_number": True}))
+check("空对象不误判", not ac._is_qr_rollcall({}))
+check("标签=二维码", ac.rollcall_label(qr_rc) == "二维码")
+check("标签=数字", ac.rollcall_label({"is_number": True}) == "数字")
+check("标签=GPS", ac.rollcall_label({"is_radar": True}) == "GPS")
+check("标签=其他", ac.rollcall_label({}) == "其他")
+check("已扫过的二维码点名算终端（不会重复提示）",
+      ac._is_terminal(qr_rc["status"], None))
+
 print(f"\n结果: {PASS} 通过 / {FAIL} 失败")
 sys.exit(1 if FAIL else 0)

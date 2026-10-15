@@ -780,11 +780,26 @@ def _cap_diag_file(path, max_bytes=256 * 1024, keep_lines=40):
         pass
 
 
+def _is_qr_rollcall(rc):
+    """是否二维码点名。
+
+    学生端 API **不携带**任何可用于提交的 token —— token 只存在于老师屏幕上的
+    那张二维码里，且实测 10 分钟就失效，所以脚本无法代签，只能提醒用户拿手机扫。
+    这里只做类型识别，供主循环给出明确提示、不再当成"状态获取失败"白重试。
+    """
+    rc = rc or {}
+    return (str(rc.get("type") or "").lower() == "qr_rollcall"
+            or str(rc.get("source") or "").lower() == "qr"
+            or bool(rc.get("is_qr")))
+
+
 def rollcall_label(rollcall):
     if rollcall.get("is_radar"):
         return "GPS"
     if rollcall.get("is_number"):
         return "数字"
+    if _is_qr_rollcall(rollcall):
+        return "二维码"
     return "其他"
 
 
@@ -954,13 +969,18 @@ def main_loop():
                     # 拿它判「还要不要接着处理」会把已签上的报成失败。
                     is_num = rc.get("is_number") and not rc.get("is_radar")
                     is_radar = bool(rc.get("is_radar"))
+                    is_qr = _is_qr_rollcall(rc)
                     code = end_time = rc_status = None
-                    if is_num or is_radar:
+                    if is_num or is_radar or is_qr:
+                        # 详情用于取数字码 / 结束时间 / 点名级状态；
+                        # 二维码点名也要它，才能告诉用户"还剩几分钟可扫"
                         try:
                             code, rc_status, end_time = get_rollcall_detail(rid, session)[:3]
                         except Exception:
                             code = end_time = rc_status = None
-                    status = rc.get("status") if (is_num or is_radar) else None
+                    # 列表项的 status 是「本人」状态，所有类型都有意义
+                    # （二维码点名也一样：on_call_fine = 已经扫过了）
+                    status = rc.get("status")
 
                     # 终端状态（已签上/已过期）→ 静默标记已处理
                     if _is_terminal(status, end_time):
@@ -972,6 +992,17 @@ def main_loop():
                     if _rollcall_dead(rc, rc_status):
                         seen.add(rid)
                         dead_skipped += 1
+                        continue
+
+                    # 二维码点名：学生端拿不到 token（只在老师屏幕的二维码里，
+                    # 实测 10 分钟失效），脚本无法代签 → 明确提示，别再当"状态获取
+                    # 失败"白重试 10 轮
+                    if is_qr:
+                        seen.add(rid)
+                        left = _time_remaining(end_time)
+                        tip = (f"，还剩 {int(left // 60)} 分 {int(left % 60)} 秒，"
+                               f"请用手机扫码" if left and left > 0 else "，请用手机扫码")
+                        emit(rid, f"[QR] {name} 是二维码点名{tip}（脚本无法代签）")
                         continue
 
                     # 数字签到：点名时间已过去很久还没下发码 → 服务端不会再给，
