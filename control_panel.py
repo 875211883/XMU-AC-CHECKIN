@@ -20,19 +20,24 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 FROZEN = getattr(sys, "frozen", False)
-# 打包成 exe 后，数据文件存放在 exe 同目录（而非临时解压目录）
+# 打包成 exe 后，程序文件在 exe 同目录；用户数据由 paths.py 统一解析
+# （便携模式=程序目录；安装模式=%APPDATA%\XMU-AC-CHECKIN，覆盖安装/卸载不丢配置）
 if FROZEN:
     BASE = Path(sys.executable).resolve().parent
 else:
     BASE = Path(__file__).resolve().parent
-LOG_FILE = BASE / "checkin.log"
-PID_FILE = BASE / "auto_checkin.pid"
-RECORD_FILE = BASE / "checkin_record.json"
-SCHEDULE_FILE = BASE / "schedule.json"
-COURSE_FILE = BASE / "course_filter.json"
-START_FILE = BASE / "start_time.txt"
-LAUNCH_FILE = BASE / "launch_count.json"
-RUN_STATUS_FILE = BASE / "auto_checkin_status.json"
+try:
+    from paths import DATA_DIR as DATA_BASE
+except Exception:
+    DATA_BASE = BASE
+LOG_FILE = DATA_BASE / "checkin.log"
+PID_FILE = DATA_BASE / "auto_checkin.pid"
+RECORD_FILE = DATA_BASE / "checkin_record.json"
+SCHEDULE_FILE = DATA_BASE / "schedule.json"
+COURSE_FILE = DATA_BASE / "course_filter.json"
+START_FILE = DATA_BASE / "start_time.txt"
+LAUNCH_FILE = DATA_BASE / "launch_count.json"
+RUN_STATUS_FILE = DATA_BASE / "auto_checkin_status.json"
 # Windows 任务计划里的两个任务名（定时启动 / 定时关闭）
 TASK_START = "XMU-AC-AutoStart"
 TASK_STOP = "XMU-AC-AutoStop"

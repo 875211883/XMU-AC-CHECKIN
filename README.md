@@ -1,4 +1,4 @@
-# XMU 畅课自动签到（Tronclass）
+﻿# XMU 畅课自动签到（Tronclass）
 
 厦门大学畅课（Tronclass）自动签到工具：**纯 API 登录（无浏览器）**，支持数字签到与 GPS 签到
 （两条距离探针三角定位反推坐标），带**签到门控**（等班里先签的人够了再签）、**课程勾选**、
@@ -79,6 +79,11 @@ tests/test_schedule.py 离线单测：课程勾选/时段判定/任务 XML（56 
 tests/probe_ui.py      界面冒烟：真建窗口跑渲染路径 + 自动拉起策略断言
 tests/verify_gate_live.py 联网只读校验：用真实名单回验门控读数与阈值
 tools/demo_ui.py       生成文档截图（假数据，不联网、不读个人配置）
+tools/make_icon.py     生成应用图标 assets/app.ico（Pillow，离线）
+tools/build_installer.py 一键构建：图标 → exe → 安装包
+paths.py               数据目录解析（便携=程序目录 / 安装=%APPDATA%，可 XMU_DATA_DIR 覆盖）
+installer/XMU-AC.iss   Inno Setup 安装包脚本
+installer/README.md    安装包构建与静默部署说明
 docs/教学.md            教学文档：原理、接口口径、门控设计、排障、二次开发
 ```
 
@@ -95,15 +100,37 @@ python tests/verify_gate_live.py # 联网只读：拉真实名单回验门控（
 
 ---
 
-## 打包成 exe
+## 安装包 / 打包
+
+### 方式一：安装包（推荐给普通用户）
+
+```powershell
+python tools/build_installer.py
+# 产物：dist\XMU-AC-CHECKIN-Setup-1.5.0.exe
+```
+
+双击即中文安装向导：选目录 → 建快捷方式 → 卸载器齐全，**不需要管理员权限**。
+安装到 `%LOCALAPPDATA%\Programs\XMU-AC-CHECKIN`，用户数据放 `%APPDATA%\XMU-AC-CHECKIN`，
+所以**覆盖安装、卸载都不会丢配置**（卸载时会问要不要一起删）。
+
+静默安装（脚本化部署）：
+
+```powershell
+.\XMU-AC-CHECKIN-Setup-1.5.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+```
+
+细节见 [installer/README.md](installer/README.md)。
+
+### 方式二：只要单文件 exe（便携版）
 
 ```powershell
 pip install pyinstaller
 python -m PyInstaller --noconfirm XMU畅课签到.spec
-# 产物：dist\XMU畅课签到.exe（单文件、GUI 子系统）
+# 产物：dist\XMU畅课签到.exe（单文件、GUI 子系统、带图标）
 ```
 
-打包后的数据文件（`creds.env` / `schedule.json` / `course_filter.json` 等）都放在 **exe 同目录**。
+便携版的数据文件放在 **exe 同目录**（`paths.py` 会自动识别，见下）；
+安装版则放在 `%APPDATA%`，两者用同一份代码，靠"程序目录里有没有老数据"自动切换。
 
 ---
 

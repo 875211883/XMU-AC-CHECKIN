@@ -1,4 +1,4 @@
-# 凭据 / 会话：含真实 Cookie 与密码，绝不提交
+﻿# 凭据 / 会话：含真实 Cookie 与密码，绝不提交
 creds.env
 auto_checkin_session.json
 auto_checkin.pid
@@ -39,3 +39,8 @@ __pycache__/
 .idea/
 .DS_Store
 Thumbs.db
+
+# 构建产物
+dist/
+build/
+*.spec.bak

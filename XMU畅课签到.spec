@@ -1,10 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
 import sysconfig
+from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_submodules
 
-hiddenimports = ['auto_checkin', 'control_panel', 'xmulogin', 'unicodedata']
+hiddenimports = ['auto_checkin', 'control_panel', 'paths', 'xmulogin',
+                 'unicodedata']
 hiddenimports += collect_submodules('xmulogin')
 
 # unicodedata 是扩展模块，某些 Python 安装下 PyInstaller 抓不到，显式带上。
@@ -13,6 +15,9 @@ _uni = os.path.join(sysconfig.get_paths()['stdlib'], '..', 'DLLs',
                     'unicodedata.pyd')
 binaries = [(_uni, '.')] if os.path.exists(_uni) else []
 
+# 应用图标（由 tools/make_icon.py 生成）。缺失时退化为默认图标，不让打包失败。
+_ico = Path(SPECPATH) / 'assets' / 'app.ico'
+icon = str(_ico) if _ico.exists() else None
 
 a = Analysis(
     ['app.py'],
@@ -48,4 +53,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=icon,
 )

@@ -60,8 +60,14 @@ if getattr(sys, "frozen", False):
     APP_DIR = Path(sys.executable).resolve().parent
 else:
     APP_DIR = Path(__file__).resolve().parent
-CRED_FILE = APP_DIR / "creds.env"
-COURSE_FILE = APP_DIR / "course_filter.json"
+# 用户数据目录由 paths.py 统一解析：便携模式=程序目录，
+# 安装模式=%APPDATA%\XMU-AC-CHECKIN（覆盖安装/卸载不丢配置）
+try:
+    from paths import DATA_DIR as _DATA_DIR
+except Exception:                      # 极端情况下退回程序目录
+    _DATA_DIR = APP_DIR
+CRED_FILE = _DATA_DIR / "creds.env"
+COURSE_FILE = _DATA_DIR / "course_filter.json"
 INTERVAL = 15           # 轮询间隔秒数
 # GPS 坐标通过三角定位自动获取，无需手动填写
 
@@ -134,9 +140,9 @@ if not _file_creds.get("STUDENT_ID") or not _file_creds.get("PASSWORD"):
     _save_cred_file(STUDENT_ID, PASSWORD)
 
 BASE_URL = "https://lnt.xmu.edu.cn"
-SESSION_FILE = APP_DIR / "auto_checkin_session.json"
-RECORD_FILE = APP_DIR / "checkin_record.json"
-STATUS_FILE = APP_DIR / "auto_checkin_status.json"
+SESSION_FILE = _DATA_DIR / "auto_checkin_session.json"
+RECORD_FILE = _DATA_DIR / "checkin_record.json"
+STATUS_FILE = _DATA_DIR / "auto_checkin_status.json"
 
 
 def write_run_status(restart_count=None, course_queries=None, query_total=None,

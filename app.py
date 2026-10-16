@@ -8,11 +8,37 @@ import sys
 import time
 import ctypes
 import threading
+from pathlib import Path
 import tkinter as tk
 from tkinter import ttk
 from tkinter import font as tkfont
 
-import control_panel as cp
+
+def _bootstrap_paths():
+    """把 exe/脚本所在目录加入 sys.path。
+
+    打包成单文件 exe 时，PyInstaller 会把 paths / auto_checkin / control_panel
+    一起塞进 archive，import 本来就正常；但**源码模式**从别的目录启动
+    （比如计划任务用绝对路径调 app.py）时，脚本目录不一定在 sys.path 里，
+    会导致 `import control_panel as cp` 失败。这里统一兜一下。
+    """
+    try:
+        if getattr(sys, "frozen", False):
+            base = Path(sys.executable).resolve().parent
+            inner = Path(getattr(sys, "_MEIPASS", base))
+        else:
+            base = Path(__file__).resolve().parent
+            inner = base
+        for p in (str(inner), str(base)):
+            if p and p not in sys.path:
+                sys.path.insert(0, p)
+    except Exception:
+        pass
+
+
+_bootstrap_paths()
+
+import control_panel as cp  # noqa: E402
 
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
