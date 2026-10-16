@@ -56,11 +56,33 @@ def _default_data_dir() -> Path:
     return Path.home() / f".{DATA_DIR_NAME.lower()}"
 
 
+def _looks_like_source_checkout(d: Path) -> bool:
+    """像是"源码仓库目录"而不是安装目录吗。
+
+    判据：有版本控制目录（.git）或项目标志文件（XMU畅课签到.spec / requirements.txt）。
+
+    为什么需要这条：源码模式跑 app.py 时，程序目录就是仓库；如果用户把仓库里的
+    creds.env 清理掉（或从没建过），按"没有老数据就用 %APPDATA%"的规则会切到
+    %APPDATA%，于是**源码模式与部署版的数据分家**。仓库目录永远优先用自己目录，
+    行为更可预期；安装版装在 %LOCALAPPDATA%\\Programs，那里没有这些标志文件，
+    仍然走 %APPDATA%，所以两者不冲突。
+    """
+    try:
+        if (d / ".git").exists():
+            return True
+        for name in ("XMU畅课签到.spec", "requirements.txt", "paths.py"):
+            if (d / name).exists():
+                return True
+    except OSError:
+        pass
+    return False
+
+
 def resolve_data_dir() -> Path:
     env = (os.environ.get("XMU_DATA_DIR") or "").strip()
     if env:
         d = Path(env).expanduser()
-    elif _has_legacy_data(APP_DIR):
+    elif _has_legacy_data(APP_DIR) or _looks_like_source_checkout(APP_DIR):
         d = APP_DIR
     else:
         d = _default_data_dir()

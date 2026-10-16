@@ -110,6 +110,23 @@ if old_appdata is not None:
     os.environ["APPDATA"] = old_appdata
 sys.modules.pop("paths", None)
 
+print("== 场景 7：源码仓库目录（即使没有数据文件）也用自己目录 ==")
+# 回归：曾经因为清掉仓库里的 creds.env，导致源码模式切到 %APPDATA%，与部署版分家
+repo = tmp / "repo"
+(repo / ".git").mkdir(parents=True, exist_ok=True)
+(repo / "requirements.txt").write_text("requests\n", encoding="utf-8")
+p, old = fresh_paths(repo, appdata)
+check("有 .git → 用仓库目录", p.resolve_data_dir() == repo, str(p.resolve_data_dir()))
+check("不带任何数据文件也认",
+      not (repo / "creds.env").exists() and p.resolve_data_dir() == repo)
+
+plain = tmp / "plain_install"
+plain.mkdir(parents=True, exist_ok=True)
+p, old = fresh_paths(plain, appdata)
+check("安装目录（无 .git/spec）→ 仍用 APPDATA",
+      p.resolve_data_dir() == appdata / "XMU-AC-CHECKIN", str(p.resolve_data_dir()))
+restore(old)
+
 shutil.rmtree(tmp, ignore_errors=True)
 print(f"\n结果: {PASS} 通过 / {FAIL} 失败")
 sys.exit(1 if FAIL else 0)
